@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"github.com/jackc/pgx/v5/pgxpool"
-	repo "github.com/yourname/insider-backend/internal/repository"
+	repo "github.com/baharkarakas/insider-backend/internal/repository"
 )
 
 type Repositories struct {

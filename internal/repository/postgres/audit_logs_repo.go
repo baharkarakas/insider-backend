@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yourname/insider-backend/internal/models"
+	"github.com/baharkarakas/insider-backend/internal/models"
 )
 
 type auditLogsRepo struct { pool *pgxpool.Pool }
