@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: insider
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d insider"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      APP_ENV: dev
+      HTTP_PORT: 8080
+      DATABASE_URL: postgres://postgres:postgres@db:5432/insider?sslmode=disable
+      JWT_SECRET: supersecret
+      JWT_ISSUER: insider-backend
+    ports:
+      - "8080:8080"
+    command: ["/app/api"]
+    restart: on-failure
+
+volumes:
+  pgdata: {}
