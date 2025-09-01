@@ -1,0 +1,11 @@
+# Tüm metin dosyaları LF olsun
+* text=auto eol=lf
+
+# Özellikle şu dosya tipleri
+*.go       text eol=lf
+*.sql      text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.md       text eol=lf
+Makefile   text eol=lf
+Dockerfile text eol=lf

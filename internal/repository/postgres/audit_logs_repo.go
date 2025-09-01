@@ -3,8 +3,8 @@ package postgres
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/baharkarakas/insider-backend/internal/models"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type auditLogsRepo struct { pool *pgxpool.Pool }

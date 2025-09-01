@@ -68,6 +68,34 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 			if err != nil { http.Error(w, err.Error(), 400); return }
 			json.NewEncoder(w).Encode(tx)
 		})
+		// balances üstüne ekle: transactions - debit
+r.Post("/transactions/debit", func(w http.ResponseWriter, r *http.Request) {
+	var req struct{ UserID string; Amount int64 }
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.UserID == "" || req.Amount <= 0 {
+		http.Error(w, "bad request", 400); return
+	}
+	tx, err := ts.Debit(req.UserID, req.Amount)
+	if err != nil { http.Error(w, err.Error(), 400); return }
+	// asenkron işlediğimiz için 202 mantıklı; istersen 200 de olur
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(tx)
+})
+
+// transactions - transfer
+r.Post("/transactions/transfer", func(w http.ResponseWriter, r *http.Request) {
+	var req struct{ FromUserID, ToUserID string; Amount int64 }
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.FromUserID == "" || req.ToUserID == "" || req.Amount <= 0 {
+		http.Error(w, "bad request", 400); return
+	}
+	tx, err := ts.Transfer(req.FromUserID, req.ToUserID, req.Amount)
+	if err != nil { http.Error(w, err.Error(), 400); return }
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(tx)
+})
+
+		
 	})
 
 	return r

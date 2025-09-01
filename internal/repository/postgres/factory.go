@@ -1,8 +1,8 @@
 package postgres
 
 import (
-	"github.com/jackc/pgx/v5/pgxpool"
 	repo "github.com/baharkarakas/insider-backend/internal/repository"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Repositories struct {

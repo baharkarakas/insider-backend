@@ -2,21 +2,25 @@ package models
 
 import "time"
 
+// ---- Types ----
 type TransactionType string
+type TransactionStatus string
+
+// ---- Type enums ----
 const (
+	// types
 	TxnCredit   TransactionType = "credit"
 	TxnDebit    TransactionType = "debit"
 	TxnTransfer TransactionType = "transfer"
-)
 
-type TransactionStatus string
-const (
+	// statuses
 	TxnPending    TransactionStatus = "pending"
 	TxnCompleted  TransactionStatus = "completed"
 	TxnFailed     TransactionStatus = "failed"
 	TxnRolledBack TransactionStatus = "rolled_back"
 )
 
+// ---- Model ----
 type Transaction struct {
 	ID         string            `json:"id"`
 	FromUserID *string           `json:"from_user_id,omitempty"`
