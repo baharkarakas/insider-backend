@@ -152,3 +152,6 @@ func (s *TransactionService) processTransfer(tx models.Transaction) error {
 func (s *TransactionService) GetByID(id string) (models.Transaction, error) {
 	return s.trx.GetByID(id)
 }
+func (s *TransactionService) ListByUser(userID string, limit, offset int) ([]models.Transaction, error) {
+	return s.trx.ListByUser(userID, limit, offset)
+}
