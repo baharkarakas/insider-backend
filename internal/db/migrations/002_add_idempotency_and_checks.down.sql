@@ -1,8 +1,12 @@
 -- Rollback: unique index ve kolon/constraint’i geri al
-DROP INDEX IF EXISTS ux_transactions_idempotency_key;
 
-ALTER TABLE transactions
+-- Index'i düşür
+DROP INDEX IF EXISTS public.ux_transactions_idempotency_key;
+
+-- Sütunu düşür
+ALTER TABLE public.transactions
   DROP COLUMN IF EXISTS idempotency_key;
 
-ALTER TABLE balances
+-- CHECK constraint'i düşür
+ALTER TABLE public.balances
   DROP CONSTRAINT IF EXISTS balances_amount_nonnegative;
