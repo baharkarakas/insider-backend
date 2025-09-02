@@ -5,10 +5,14 @@ import (
 
 	"github.com/baharkarakas/insider-backend/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type transactionsRepo struct{ pool *pgxpool.Pool }
+
+// ctor'un vardır; yoksa:
+// func NewTransactionsRepo(pool *pgxpool.Pool) *transactionsRepo { return &transactionsRepo{pool: pool} }
 
 func (r *transactionsRepo) Create(tx models.Transaction) (models.Transaction, error) {
 	if tx.ID == "" {
@@ -69,4 +73,20 @@ func (r *transactionsRepo) UpdateStatus(id string, status models.TransactionStat
 		id, status,
 	)
 	return err
+}
+
+// 🔐 pgx ile tek transaction çalıştır
+func (r *transactionsRepo) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.Serializable,
+		AccessMode: pgx.ReadWrite,
+	})
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
 }

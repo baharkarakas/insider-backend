@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -8,6 +9,7 @@ import (
 	"github.com/baharkarakas/insider-backend/internal/models"
 	repo "github.com/baharkarakas/insider-backend/internal/repository"
 	"github.com/baharkarakas/insider-backend/internal/worker"
+	"github.com/jackc/pgx/v5"
 )
 
 type TransactionService struct {
@@ -181,44 +183,89 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 		return models.Transaction{}, errors.New("cannot transfer to self")
 	}
 
-	// Idempotency
+	// Idempotency (process-local)
 	if idemKey != "" {
 		if v, ok := s.idem.Load(idemKey); ok {
 			return s.trx.GetByID(v.(string))
 		}
 	}
 
-	// Yetersiz bakiye koruması
+	// Balans kayıtlarını hazırla
 	if err := s.getOrCreateBalance(fromID); err != nil {
 		return models.Transaction{}, err
 	}
 	if err := s.getOrCreateBalance(toID); err != nil {
 		return models.Transaction{}, err
 	}
-	if b, err := s.bal.Get(fromID); err == nil {
-		if b.Amount < amount {
-			return models.Transaction{}, errors.New("insufficient balance")
-		}
+	// Basit ön kontrol (opsiyonel)
+	if b, err := s.bal.Get(fromID); err == nil && b.Amount < amount {
+		return models.Transaction{}, errors.New("insufficient balance")
 	}
 
-	tx := models.Transaction{
+	// Pending transaction kaydı
+	txModel := models.Transaction{
 		Amount:     amount,
 		Type:       models.TxnTransfer,
 		Status:     models.TxnPending,
 		FromUserID: &fromID,
 		ToUserID:   &toID,
 	}
-	tx, err := s.trx.Create(tx)
+	created, err := s.trx.Create(txModel)
 	if err != nil {
 		return models.Transaction{}, err
 	}
-	s.audit(tx.ID, "created", "transfer created")
+	s.audit(created.ID, "created", "transfer created")
 	if idemKey != "" {
-		s.idem.Store(idemKey, tx.ID)
+		s.idem.Store(idemKey, created.ID)
 	}
 
-	s.wp.Submit(func() { _ = s.processTransfer(tx) })
-	return tx, nil
+	// 🔐 Atomik blok (pgx.Tx ile)
+	err = s.trx.WithTx(context.Background(), func(pgtx pgx.Tx) error {
+		// 1) debit (koşullu: amount >= ?)
+		tag, err := pgtx.Exec(context.Background(),
+			`UPDATE balances
+             SET amount = amount - $1, last_updated_at = now()
+             WHERE user_id = $2 AND amount >= $1`,
+			amount, fromID,
+		)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return errors.New("insufficient balance")
+		}
+
+		// 2) credit
+		if _, err := pgtx.Exec(context.Background(),
+			`UPDATE balances
+             SET amount = amount + $1, last_updated_at = now()
+             WHERE user_id = $2`,
+			amount, toID,
+		); err != nil {
+			return err
+		}
+
+		// 3) status -> completed (aynı transaction içinde)
+		if _, err := pgtx.Exec(context.Background(),
+			`UPDATE transactions
+             SET status = 'completed'
+             WHERE id = $1`,
+			created.ID,
+		); err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		_ = s.trx.UpdateStatus(created.ID, models.TxnRolledBack)
+		s.audit(created.ID, "status_change", fmt.Sprintf("%s: %s", models.TxnRolledBack, err.Error()))
+		return models.Transaction{}, err
+	}
+
+	created.Status = models.TxnCompleted
+	s.audit(created.ID, "status_change", "completed: transfer applied")
+	return created, nil
 }
 
 func (s *TransactionService) processTransfer(tx models.Transaction) error {
