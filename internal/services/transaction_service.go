@@ -268,27 +268,7 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 	return created, nil
 }
 
-func (s *TransactionService) processTransfer(tx models.Transaction) error {
-	if tx.FromUserID == nil || tx.ToUserID == nil {
-		return s.updateStatus(tx.ID, models.TxnFailed, "missing ends")
-	}
 
-	// 1) debit
-	if _, err := s.bal.UpdateAmount(*tx.FromUserID, -tx.Amount); err != nil {
-		_ = s.updateStatus(tx.ID, models.TxnFailed, "transfer debit failed")
-		return err
-	}
-
-	// 2) credit
-	if _, err := s.bal.UpdateAmount(*tx.ToUserID, tx.Amount); err != nil {
-		// rollback
-		_, _ = s.bal.UpdateAmount(*tx.FromUserID, tx.Amount)
-		_ = s.updateStatus(tx.ID, models.TxnRolledBack, "transfer credit failed, rolled back")
-		return err
-	}
-
-	return s.updateStatus(tx.ID, models.TxnCompleted, "transfer applied")
-}
 
 // ----------------- Queries -----------------
 
