@@ -44,7 +44,7 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 				Password string
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			u, err := us.Register(req.Username, req.Email, req.Password)
@@ -62,7 +62,7 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 				Password string
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			tok, err := us.Login(req.Email, req.Password)
@@ -106,7 +106,7 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 				Amount int64
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			tx, err := ts.CreditIdem(req.UserID, req.Amount, idem)
@@ -127,6 +127,10 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 				Amount int64
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" || req.Amount <= 0 {
+				if err != nil {
+					http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+					return
+				}
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -149,6 +153,10 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 				Amount     int64
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.FromUserID == "" || req.ToUserID == "" || req.Amount <= 0 {
+				if err != nil {
+					http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+					return
+				}
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}

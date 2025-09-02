@@ -78,6 +78,10 @@ func (s *TransactionService) CreditIdem(userID string, amount int64, idemKey str
 		Status:   models.TxnPending,
 		ToUserID: &userID,
 	}
+	if idemKey != "" {
+    tx.IdempotencyKey = &idemKey
+}
+
 	tx, err := s.trx.Create(tx)
 	if err != nil {
 		return models.Transaction{}, err
@@ -142,6 +146,10 @@ func (s *TransactionService) DebitIdem(userID string, amount int64, idemKey stri
 		Status:     models.TxnPending,
 		FromUserID: &userID,
 	}
+	if idemKey != "" {
+    tx.IdempotencyKey = &idemKey
+}
+
 	tx, err := s.trx.Create(tx)
 	if err != nil {
 		return models.Transaction{}, err
@@ -204,13 +212,15 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 
 	// Pending transaction kaydı
 	txModel := models.Transaction{
-		Amount:     amount,
-		Type:       models.TxnTransfer,
-		Status:     models.TxnPending,
-		FromUserID: &fromID,
-		ToUserID:   &toID,
-	}
-	created, err := s.trx.Create(txModel)
+    Amount:     amount,
+    Type:       models.TxnTransfer,
+    Status:     models.TxnPending,
+    FromUserID: &fromID,
+    ToUserID:   &toID,
+}
+if idemKey != "" { txModel.IdempotencyKey = &idemKey }
+created, err := s.trx.Create(txModel)
+
 	if err != nil {
 		return models.Transaction{}, err
 	}

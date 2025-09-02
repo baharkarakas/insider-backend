@@ -18,15 +18,22 @@ func (r *transactionsRepo) Create(tx models.Transaction) (models.Transaction, er
 	if tx.ID == "" {
 		tx.ID = uuid.NewString()
 	}
+	const q = `
+INSERT INTO transactions (
+  id, from_user_id, to_user_id, amount, type, status, idempotency_key
+) VALUES ($1,$2,$3,$4,$5,$6,$7)
+ON CONFLICT (idempotency_key) DO UPDATE
+SET idempotency_key = EXCLUDED.idempotency_key  -- no-op update; mevcut satırı RETURNING ile alacağız
+RETURNING id, from_user_id, to_user_id, amount, type, status, created_at;
+`
 	err := r.pool.QueryRow(
-		context.Background(),
-		`INSERT INTO transactions(id, from_user_id, to_user_id, amount, type, status)
-		 VALUES($1,$2,$3,$4,$5,$6)
-		 RETURNING created_at`,
-		tx.ID, tx.FromUserID, tx.ToUserID, tx.Amount, tx.Type, tx.Status,
-	).Scan(&tx.CreatedAt)
+		context.Background(), q,
+		tx.ID, tx.FromUserID, tx.ToUserID, tx.Amount, tx.Type, tx.Status, tx.IdempotencyKey,
+	).Scan(&tx.ID, &tx.FromUserID, &tx.ToUserID, &tx.Amount, &tx.Type, &tx.Status, &tx.CreatedAt)
 	return tx, err
 }
+
+
 
 func (r *transactionsRepo) GetByID(id string) (models.Transaction, error) {
 	var tx models.Transaction
