@@ -10,7 +10,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d insider"]
+      # $ değişkenlerini compose’un genişletmemesi için $$ kullandık
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 2s
       timeout: 2s
       retries: 15
@@ -20,12 +21,28 @@ services:
     ports:
       - "6379:6379"
 
+  migrator:
+    image: migrate/migrate:4
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./internal/db/migrations:/migrations:ro
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/insider?sslmode=disable
+    entrypoint: ["/bin/sh", "-lc"]
+    # Burada da $$DATABASE_URL kullanıyoruz
+    command: >
+      'migrate -path /migrations -database "$$DATABASE_URL" up || true; tail -f /dev/null'
+
   app:
     build: .
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_started
+      migrator:
         condition: service_started
     environment:
       APP_ENV: dev

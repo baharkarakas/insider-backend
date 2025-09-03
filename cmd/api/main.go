@@ -39,10 +39,15 @@ func main() {
 	}
 	defer dbPool.Close()
 
+	// Opsiyonel: Uygulama içi migration'ı env ile aç/kapat.
+// Docker Compose'ta APP_MIGRATE set etmeyeceğiz, yani default: kapalı.
+if os.Getenv("APP_MIGRATE") == "true" {
 	if err := db.RunMigrations(ctx, dbPool); err != nil {
 		log.Error("migrations", "err", err)
 		os.Exit(1)
 	}
+}
+
 
 	repos := postgres.NewRepositories(dbPool)
 	wp := worker.NewPool(4)
