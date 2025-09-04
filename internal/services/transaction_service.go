@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/baharkarakas/insider-backend/internal/metrics"
 	"github.com/baharkarakas/insider-backend/internal/models"
 	repo "github.com/baharkarakas/insider-backend/internal/repository"
 	"github.com/baharkarakas/insider-backend/internal/worker"
@@ -33,9 +34,9 @@ func (s *TransactionService) audit(entityID, action, details string) {
 	}
 	_ = s.log.Create(models.AuditLog{
 		EntityType: "transaction",
-		EntityID:   &entityID, // pointer veriyoruz
+		EntityID:   &entityID,
 		Action:     action,
-		Details:    det,       // map[string]any veriyoruz
+		Details:    det,
 	})
 }
 
@@ -79,20 +80,30 @@ func (s *TransactionService) CreditIdem(userID string, amount int64, idemKey str
 		ToUserID: &userID,
 	}
 	if idemKey != "" {
-    tx.IdempotencyKey = &idemKey
-}
+		tx.IdempotencyKey = &idemKey
+	}
 
-	tx, err := s.trx.Create(tx)
+	created, err := s.trx.Create(tx)
 	if err != nil {
 		return models.Transaction{}, err
 	}
-	s.audit(tx.ID, "created", "credit created")
+	s.audit(created.ID, "created", "credit created")
 	if idemKey != "" {
-		s.idem.Store(idemKey, tx.ID)
+		s.idem.Store(idemKey, created.ID)
 	}
 
-	s.wp.Submit(func() { _ = s.processCredit(tx) })
-	return tx, nil
+	s.wp.Submit(func() {
+		metrics.WorkerQueueDepth.Inc()
+		defer metrics.WorkerQueueDepth.Dec()
+
+		if err := s.processCredit(created); err != nil {
+			metrics.TransactionsFailed.Inc()
+			return
+		}
+		metrics.TransactionsTotal.WithLabelValues("credit").Inc()
+	})
+
+	return created, nil
 }
 
 func (s *TransactionService) processCredit(tx models.Transaction) error {
@@ -134,10 +145,8 @@ func (s *TransactionService) DebitIdem(userID string, amount int64, idemKey stri
 	if err := s.getOrCreateBalance(userID); err != nil {
 		return models.Transaction{}, err
 	}
-	if b, err := s.bal.Get(userID); err == nil {
-		if b.Amount < amount {
-			return models.Transaction{}, errors.New("insufficient balance")
-		}
+	if b, err := s.bal.Get(userID); err == nil && b.Amount < amount {
+		return models.Transaction{}, errors.New("insufficient balance")
 	}
 
 	tx := models.Transaction{
@@ -147,27 +156,36 @@ func (s *TransactionService) DebitIdem(userID string, amount int64, idemKey stri
 		FromUserID: &userID,
 	}
 	if idemKey != "" {
-    tx.IdempotencyKey = &idemKey
-}
+		tx.IdempotencyKey = &idemKey
+	}
 
-	tx, err := s.trx.Create(tx)
+	created, err := s.trx.Create(tx)
 	if err != nil {
 		return models.Transaction{}, err
 	}
-	s.audit(tx.ID, "created", "debit created")
+	s.audit(created.ID, "created", "debit created")
 	if idemKey != "" {
-		s.idem.Store(idemKey, tx.ID)
+		s.idem.Store(idemKey, created.ID)
 	}
 
-	s.wp.Submit(func() { _ = s.processDebit(tx) })
-	return tx, nil
+	s.wp.Submit(func() {
+		metrics.WorkerQueueDepth.Inc()
+		defer metrics.WorkerQueueDepth.Dec()
+
+		if err := s.processDebit(created); err != nil {
+			metrics.TransactionsFailed.Inc()
+			return
+		}
+		metrics.TransactionsTotal.WithLabelValues("debit").Inc()
+	})
+
+	return created, nil
 }
 
 func (s *TransactionService) processDebit(tx models.Transaction) error {
 	if tx.FromUserID == nil {
 		return s.updateStatus(tx.ID, models.TxnFailed, "missing from user")
 	}
-	// (İşlem anında da kontrol etmek istersen buraya tekrar Get koyabilirsin)
 	if _, err := s.bal.UpdateAmount(*tx.FromUserID, -tx.Amount); err != nil {
 		_ = s.updateStatus(tx.ID, models.TxnFailed, "debit update failed")
 		return err
@@ -212,15 +230,16 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 
 	// Pending transaction kaydı
 	txModel := models.Transaction{
-    Amount:     amount,
-    Type:       models.TxnTransfer,
-    Status:     models.TxnPending,
-    FromUserID: &fromID,
-    ToUserID:   &toID,
-}
-if idemKey != "" { txModel.IdempotencyKey = &idemKey }
-created, err := s.trx.Create(txModel)
-
+		Amount:     amount,
+		Type:       models.TxnTransfer,
+		Status:     models.TxnPending,
+		FromUserID: &fromID,
+		ToUserID:   &toID,
+	}
+	if idemKey != "" {
+		txModel.IdempotencyKey = &idemKey
+	}
+	created, err := s.trx.Create(txModel)
 	if err != nil {
 		return models.Transaction{}, err
 	}
@@ -270,15 +289,15 @@ created, err := s.trx.Create(txModel)
 	if err != nil {
 		_ = s.trx.UpdateStatus(created.ID, models.TxnRolledBack)
 		s.audit(created.ID, "status_change", fmt.Sprintf("%s: %s", models.TxnRolledBack, err.Error()))
+		metrics.TransactionsFailed.Inc()
 		return models.Transaction{}, err
 	}
 
 	created.Status = models.TxnCompleted
 	s.audit(created.ID, "status_change", "completed: transfer applied")
+	metrics.TransactionsTotal.WithLabelValues("transfer").Inc()
 	return created, nil
 }
-
-
 
 // ----------------- Queries -----------------
 

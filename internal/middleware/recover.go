@@ -3,6 +3,8 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+
+	"github.com/baharkarakas/insider-backend/internal/api/httpx"
 )
 
 func Recover(next http.Handler) http.Handler {
@@ -10,7 +12,8 @@ func Recover(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("panic", "err", rec)
-				http.Error(w, "internal error", http.StatusInternalServerError)
+				httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal error", nil)
+
 			}
 		}()
 		next.ServeHTTP(w, r)

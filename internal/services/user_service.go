@@ -29,8 +29,11 @@ func (s *UserService) Register(username, email, password string) (models.User, e
 func (s *UserService) Login(email, password string) (string, error) {
 	u, err := s.r.GetByEmail(strings.TrimSpace(email))
 	if err != nil { return "", errors.New("invalid credentials") }
-	if !auth.CheckPassword(u.PasswordHash, password) { return "", errors.New("invalid credentials") }
+	if !auth.CheckPassword(u.PasswordHash, strings.TrimSpace(password)) {
+		return "", errors.New("invalid credentials")
+	}
 	return auth.NewToken(s.c.JWTSecret, s.c.JWTIssuer, u.ID, u.Role, 24*time.Hour)
 }
+
 
 func (s *UserService) List() ([]models.User, error) { return s.r.List() }

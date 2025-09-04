@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/baharkarakas/insider-backend/internal/api/httpx"
 )
 
 type ctxKey string
@@ -74,7 +76,7 @@ func Auth() func(http.Handler) http.Handler {
 					return
 				}
 			}
-			http.Error(w, "unauthorized: user_id not provided", http.StatusUnauthorized)
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "user_id not provided", nil)
 		})
 	}
 }

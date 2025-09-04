@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/baharkarakas/insider-backend/internal/api/httpx"
+	"github.com/baharkarakas/insider-backend/internal/api/validate"
 	"github.com/baharkarakas/insider-backend/internal/config"
 	"github.com/baharkarakas/insider-backend/internal/middleware"
 	"github.com/baharkarakas/insider-backend/internal/services"
@@ -19,7 +21,8 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 	r := chi.NewRouter()
 
 	// Base middlewares
-	r.Use(middleware.RequestID, middleware.Recover, middleware.RateLimit(100))
+	r.Use(middleware.RequestID, middleware.Recover, middleware.RateLimit(100), middleware.HTTPMetrics)
+
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"}, // dilersen cfg’den oku
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -92,19 +95,22 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 
 			// ---- balances ----
 			pr.Get("/balances/current", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				uid, ok := middleware.UserID(r.Context())
-				if !ok || uid == "" {
-					http.Error(w, "unauthorized: user_id not provided", http.StatusUnauthorized)
-					return
-				}
-				b, err := bs.Current(uid)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				_ = json.NewEncoder(w).Encode(b)
-			})
+    uid, ok := middleware.UserID(r.Context())
+    if !ok || uid == "" {
+        httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "user_id not provided", nil)
+        return
+    }
+
+    b, err := bs.Current(uid)
+    if err != nil {
+        // servis bir şey döndürdüyse mesajı aynen taşıyoruz
+        httpx.WriteError(w, http.StatusBadRequest, "balance_failed", err.Error(), nil)
+        return
+    }
+
+    httpx.WriteJSON(w, http.StatusOK, b)
+})
+
 
 			pr.Get("/balances/at-time", func(w http.ResponseWriter, r *http.Request) {
 				// Placeholder: ihtiyaç olunca doldur.
@@ -115,122 +121,131 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 
 			// credit
 			pr.Post("/transactions/credit", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				uid, ok := middleware.UserID(r.Context())
-				if !ok || uid == "" {
-					http.Error(w, "unauthorized: user_id not provided", http.StatusUnauthorized)
-					return
-				}
-				idem := r.Header.Get("Idempotency-Key")
-				var req struct {
-					Amount int64 `json:"amount"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
-					if err != nil {
-						http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-						return
-					}
-					http.Error(w, "bad request", http.StatusBadRequest)
-					return
-				}
-				tx, err := ts.CreditIdem(uid, req.Amount, idem)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				w.WriteHeader(http.StatusAccepted)
-				_ = json.NewEncoder(w).Encode(tx)
-			})
+	uid, ok := middleware.UserID(r.Context())
+	if !ok || uid == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "user_id not provided", nil)
+		return
+	}
 
-			// debit
-			pr.Post("/transactions/debit", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				uid, ok := middleware.UserID(r.Context())
-				if !ok || uid == "" {
-					http.Error(w, "unauthorized: user_id not provided", http.StatusUnauthorized)
-					return
-				}
-				idem := r.Header.Get("Idempotency-Key")
-				var req struct {
-					Amount int64 `json:"amount"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
-					if err != nil {
-						http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-						return
-					}
-					http.Error(w, "bad request", http.StatusBadRequest)
-					return
-				}
-				tx, err := ts.DebitIdem(uid, req.Amount, idem)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				w.WriteHeader(http.StatusAccepted)
-				_ = json.NewEncoder(w).Encode(tx)
-			})
+	idem := r.Header.Get("Idempotency-Key")
+
+	type creditReq struct {
+		Amount int64 `json:"amount"`
+	}
+	var in creditReq
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "invalid json", nil)
+		return
+	}
+
+	var verr validate.Errs
+	if e := validate.MinInt("amount", in.Amount, 1); e != nil {
+		verr = append(verr, *e)
+	}
+	if len(verr) > 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid payload", verr)
+		return
+	}
+
+	tx, err := ts.CreditIdem(uid, in.Amount, idem)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "credit_failed", err.Error(), nil)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusAccepted, tx)
+})
+
+
+
 
 			// transfer (from = context; body: to_user_id, amount)
-			pr.Post("/transactions/transfer", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				from, ok := middleware.UserID(r.Context())
-				if !ok || from == "" {
-					http.Error(w, "unauthorized: user_id not provided", http.StatusUnauthorized)
-					return
-				}
-				idem := r.Header.Get("Idempotency-Key")
-				var req struct {
-					ToUserID string `json:"to_user_id"`
-					Amount   int64  `json:"amount"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ToUserID == "" || req.Amount <= 0 {
-					if err != nil {
-						http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-						return
-					}
-					http.Error(w, "bad request", http.StatusBadRequest)
-					return
-				}
-				tx, err := ts.TransferIdem(from, req.ToUserID, req.Amount, idem)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				w.WriteHeader(http.StatusAccepted)
-				_ = json.NewEncoder(w).Encode(tx)
-			})
+pr.Post("/transactions/transfer", func(w http.ResponseWriter, r *http.Request) {
+	from, ok := middleware.UserID(r.Context())
+	if !ok || from == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "user_id not provided", nil)
+		return
+	}
+
+	idem := r.Header.Get("Idempotency-Key")
+
+	type transferReq struct {
+		ToUserID string `json:"to_user_id"`
+		Amount   int64  `json:"amount"`
+	}
+
+	var in transferReq
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "invalid json", nil)
+		return
+	}
+
+	var verr validate.Errs
+	if e := validate.Required("to_user_id", in.ToUserID); e != nil {
+		verr = append(verr, *e)
+	}
+	if e := validate.MinInt("amount", in.Amount, 1); e != nil {
+		verr = append(verr, *e)
+	}
+	if len(verr) > 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid payload", verr)
+		return
+	}
+
+	// Ek kural: kendine transfer yasak
+	if in.ToUserID == from {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "cannot transfer to self", nil)
+		return
+	}
+
+	tx, err := ts.TransferIdem(from, in.ToUserID, in.Amount, idem)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "transfer_failed", err.Error(), nil)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusAccepted, tx)
+})
+
+
+
+
+			// transfer (from = context; body: to_user_id, amount)
+			
 
 			// list/history (kimlik context’ten)
-			pr.Get("/transactions/history", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				uid, ok := middleware.UserID(r.Context())
-				if !ok || uid == "" {
-					http.Error(w, "unauthorized: user_id not provided", http.StatusUnauthorized)
-					return
-				}
-				limit := parseInt(r.URL.Query().Get("limit"), 50, 1)
-				offset := parseInt(r.URL.Query().Get("offset"), 0, 0)
+			// /transactions/history
+pr.Get("/transactions/history", func(w http.ResponseWriter, r *http.Request) {
+    uid, ok := middleware.UserID(r.Context())
+    if !ok || uid == "" {
+        httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "user_id not provided", nil)
+        return
+    }
 
-				txs, err := ts.ListByUser(uid, limit, offset)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				_ = json.NewEncoder(w).Encode(txs)
-			})
+    limit := parseInt(r.URL.Query().Get("limit"), 50, 1)
+    offset := parseInt(r.URL.Query().Get("offset"), 0, 0)
 
-			// get by id
-			pr.Get(`/transactions/{id:[0-9a-fA-F-]{36}}`, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				id := chi.URLParam(r, "id")
-				tx, err := ts.GetByID(id)
-				if err != nil {
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				}
-				_ = json.NewEncoder(w).Encode(tx)
-			})
+    txs, err := ts.ListByUser(uid, limit, offset)
+    if err != nil {
+        httpx.WriteError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+        return
+    }
+
+    httpx.WriteJSON(w, http.StatusOK, txs)
+})
+
+
+// /transactions/{id}
+pr.Get(`/transactions/{id:[0-9a-fA-F-]{36}}`, func(w http.ResponseWriter, r *http.Request) {
+    id := chi.URLParam(r, "id")
+    tx, err := ts.GetByID(id)
+    if err != nil {
+        httpx.WriteError(w, http.StatusNotFound, "not_found", "transaction not found", nil)
+        return
+    }
+    httpx.WriteJSON(w, http.StatusOK, tx)
+})
+
 		})
 	})
 

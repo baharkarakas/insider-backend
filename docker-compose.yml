@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:16
+    image: postgres:16-alpine
+    container_name: insider-db
     environment:
       POSTGRES_DB: insider
       POSTGRES_USER: postgres
@@ -15,14 +16,18 @@ services:
       interval: 2s
       timeout: 2s
       retries: 15
+    restart: unless-stopped
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
+    container_name: insider-redis
     ports:
       - "6379:6379"
+    restart: unless-stopped
 
   migrator:
     image: migrate/migrate:4
+    container_name: insider-migrator
     depends_on:
       db:
         condition: service_healthy
@@ -31,12 +36,13 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/insider?sslmode=disable
     entrypoint: ["/bin/sh", "-lc"]
-    # Burada da $$DATABASE_URL kullanıyoruz
     command: >
       'migrate -path /migrations -database "$$DATABASE_URL" up || true; tail -f /dev/null'
+    restart: on-failure
 
   app:
     build: .
+    container_name: insider-app
     depends_on:
       db:
         condition: service_healthy
@@ -47,6 +53,7 @@ services:
     environment:
       APP_ENV: dev
       HTTP_PORT: 8080
+      # DİKKAT: container içinden DB host ismi 'db' olmalı (localhost değil)
       DATABASE_URL: postgres://postgres:postgres@db:5432/insider?sslmode=disable
       JWT_SECRET: supersecret
       JWT_ISSUER: insider-backend
