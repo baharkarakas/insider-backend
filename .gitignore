@@ -1,0 +1,14 @@
+# build artefacts
+api.exe
+bin/
+dist/
+coverage/
+
+# env
+.env
+.env.*
+*.local
+
+# OS/editor
+.DS_Store
+*.swp
