@@ -3,14 +3,18 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	h "github.com/baharkarakas/insider-backend/internal/api/handlers"
 	"github.com/baharkarakas/insider-backend/internal/api/httpx"
 	"github.com/baharkarakas/insider-backend/internal/api/validate"
+	a "github.com/baharkarakas/insider-backend/internal/auth"
 	"github.com/baharkarakas/insider-backend/internal/config"
 	"github.com/baharkarakas/insider-backend/internal/middleware"
 	"github.com/baharkarakas/insider-backend/internal/services"
@@ -36,6 +40,18 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 		_, _ = w.Write([]byte("ok"))
 	})
 	r.Handle("/metrics", promhttp.Handler())
+	// JWT parçaları (cfg’den okuyorsun)
+// JWT parçaları (ENV'den)
+accessSecret := os.Getenv("JWT_ACCESS_SECRET")
+refreshSecret := os.Getenv("JWT_REFRESH_SECRET")
+accessTTL, _ := time.ParseDuration(os.Getenv("JWT_ACCESS_TTL"))
+refreshTTL, _ := time.ParseDuration(os.Getenv("JWT_REFRESH_TTL"))
+appEnv := os.Getenv("APP_ENV")
+
+tm := a.NewTokenManager(accessSecret, refreshSecret, accessTTL, refreshTTL)
+ah := h.NewAuthHandler(tm)
+
+
 
 	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
@@ -59,28 +75,17 @@ func NewRouter(cfg config.Config, us *services.UserService, bs *services.Balance
 			_ = json.NewEncoder(w).Encode(u)
 		})
 
-		r.Post("/auth/login", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			var req struct {
-				Email    string `json:"email"`
-				Password string `json:"password"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			tok, err := us.Login(req.Email, req.Password)
-			if err != nil {
-				http.Error(w, "invalid credentials", http.StatusUnauthorized)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"token": tok})
-		})
+		r.Post("/auth/login", ah.Login)
+r.Post("/auth/refresh", ah.Refresh)
+
+
 
 		// ---------- PROTECTED ----------
 		r.Group(func(pr chi.Router) {
+    amw := middleware.NewAuthMiddleware(tm, appEnv)
+    pr.Use(amw.Auth)
 			// Gün4 auth: Authorization: Bearer dev-<userID> vb. -> context’e Claims
-			pr.Use(middleware.Auth())
+			
 
 			// ---- users ----
 			pr.Get("/users", func(w http.ResponseWriter, r *http.Request) {

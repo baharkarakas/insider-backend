@@ -1,3 +1,4 @@
+// internal/auth/jwt.go
 package auth
 
 import (
@@ -7,31 +8,84 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type TokenManager struct {
+	accessSecret  []byte
+	refreshSecret []byte
+	accessTTL     time.Duration
+	refreshTTL    time.Duration
+}
+
+func NewTokenManager(accessSecret, refreshSecret string, accessTTL, refreshTTL time.Duration) *TokenManager {
+	return &TokenManager{
+		accessSecret:  []byte(accessSecret),
+		refreshSecret: []byte(refreshSecret),
+		accessTTL:     accessTTL,
+		refreshTTL:    refreshTTL,
+	}
+}
+
 type Claims struct {
 	UserID string `json:"uid"`
 	Role   string `json:"role"`
+	Type   string `json:"typ"` // "access" | "refresh"
 	jwt.RegisteredClaims
 }
 
-func NewToken(secret, issuer, userID, role string, ttl time.Duration) (string, error) {
-	claims := &Claims{
+// GeneratePair: access + refresh üretir
+func (tm *TokenManager) GeneratePair(userID, role string) (access string, refresh string, accessExp time.Time, err error) {
+	now := time.Now()
+
+	accClaims := Claims{
 		UserID: userID,
 		Role:   role,
+		Type:   "access",
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    issuer,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(tm.accessTTL)),
 		},
 	}
-	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return t.SignedString([]byte(secret))
+	refClaims := Claims{
+		UserID: userID,
+		Role:   role,
+		Type:   "refresh",
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(tm.refreshTTL)),
+		},
+	}
+
+	accTok := jwt.NewWithClaims(jwt.SigningMethodHS256, accClaims)
+	refTok := jwt.NewWithClaims(jwt.SigningMethodHS256, refClaims)
+
+	access, err = accTok.SignedString(tm.accessSecret)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	refresh, err = refTok.SignedString(tm.refreshSecret)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	return access, refresh, accClaims.ExpiresAt.Time, nil
 }
 
-func Parse(secret, token string) (*Claims, error) {
-	t, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (interface{}, error) {
-		return []byte(secret), nil
+// ParseAny: hem access hem refresh deneyip döner
+func (tm *TokenManager) ParseAny(tokenStr string) (*Claims, bool, error) {
+	// önce access ile dene
+	claims := &Claims{}
+	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+		return tm.accessSecret, nil
 	})
-	if err != nil { return nil, err }
-	c, ok := t.Claims.(*Claims)
-	if !ok || !t.Valid { return nil, errors.New("invalid token") }
-	return c, nil
+	if err == nil && claims.Type == "access" {
+		return claims, false, nil
+	}
+
+	// refresh ile dene
+	claims = &Claims{}
+	_, err = jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+		return tm.refreshSecret, nil
+	})
+	if err == nil && claims.Type == "refresh" {
+		return claims, true, nil
+	}
+	return nil, false, errors.New("invalid token")
 }
