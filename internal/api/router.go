@@ -57,23 +57,41 @@ ah := h.NewAuthHandler(tm)
 	r.Route("/api/v1", func(r chi.Router) {
 		// ---------- PUBLIC: auth ----------
 		r.Post("/auth/register", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			var req struct {
-				Username string `json:"username"`
-				Email    string `json:"email"`
-				Password string `json:"password"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			u, err := us.Register(req.Username, req.Email, req.Password)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(u)
-		})
+	w.Header().Set("Content-Type", "application/json")
+
+	var req struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "invalid json", nil)
+		return
+	}
+
+	// Basit doğrulama (istersen validate paketinle genişletebilirsin)
+	var verr validate.Errs
+	if e := validate.Required("username", req.Username); e != nil {
+		verr = append(verr, *e)
+	}
+	if e := validate.Required("email", req.Email); e != nil {
+		verr = append(verr, *e)
+	}
+	
+	if len(verr) > 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid payload", verr)
+		return
+	}
+
+	u, err := us.Register(req.Username, req.Email, req.Password)
+	if err != nil {
+		// servis hata mesajını taşı
+		httpx.WriteError(w, http.StatusBadRequest, "register_failed", err.Error(), nil)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, u)
+})
 
 		r.Post("/auth/login", ah.Login)
 r.Post("/auth/refresh", ah.Refresh)
@@ -88,15 +106,19 @@ r.Post("/auth/refresh", ah.Refresh)
 			
 
 			// ---- users ----
-			pr.Get("/users", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				users, err := us.List()
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				_ = json.NewEncoder(w).Encode(users)
-			})
+			 pr.Group(func(ar chi.Router) {
+        ar.Use(middleware.RequireRole("admin"))
+
+        pr.With(middleware.RequireRole("admin")).Get("/users", func(w http.ResponseWriter, r *http.Request) {
+	users, err := us.List()
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, users)
+})
+
+    })
 
 			// ---- balances ----
 			pr.Get("/balances/current", func(w http.ResponseWriter, r *http.Request) {
