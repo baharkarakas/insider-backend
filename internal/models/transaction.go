@@ -2,11 +2,11 @@ package models
 
 import "time"
 
-// ---- Types ----
+
 type TransactionType string
 type TransactionStatus string
 
-// ---- Type enums ----
+
 const (
 	// types
 	TxnCredit   TransactionType = "credit"
@@ -20,7 +20,7 @@ const (
 	TxnRolledBack TransactionStatus = "rolled_back"
 )
 
-// ---- Model ----
+// Model
 type Transaction struct {
     ID         string             `json:"id"`
     FromUserID *string            `json:"from_user_id,omitempty"`
@@ -30,6 +30,5 @@ type Transaction struct {
     Status     TransactionStatus  `json:"status"`
     CreatedAt  time.Time          `json:"created_at"`
 
-    // ✅ yeni
     IdempotencyKey *string        `json:"idempotency_key,omitempty"`
 }

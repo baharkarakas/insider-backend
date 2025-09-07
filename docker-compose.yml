@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16
     container_name: insider-db
     environment:
       POSTGRES_DB: insider
@@ -11,7 +11,6 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      # $ değişkenlerini compose’un genişletmemesi için $$ kullandık
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 2s
       timeout: 2s
@@ -33,11 +32,14 @@ services:
         condition: service_healthy
     volumes:
       - ./internal/db/migrations:/migrations:ro
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@db:5432/insider?sslmode=disable
-    entrypoint: ["/bin/sh", "-lc"]
-    command: >
-      'migrate -path /migrations -database "$$DATABASE_URL" up || true; tail -f /dev/null'
+    command:
+      [
+        "-path",
+        "/migrations",
+        "-database",
+        "postgres://postgres:postgres@db:5432/insider?sslmode=disable",
+        "up",
+      ]
     restart: on-failure
 
   app:
@@ -50,13 +52,17 @@ services:
         condition: service_started
       migrator:
         condition: service_started
+    env_file:
+      - .env
     environment:
-      APP_ENV: dev
-      HTTP_PORT: 8080
-      # DİKKAT: container içinden DB host ismi 'db' olmalı (localhost değil)
-      DATABASE_URL: postgres://postgres:postgres@db:5432/insider?sslmode=disable
-      JWT_SECRET: supersecret
-      JWT_ISSUER: insider-backend
+      APP_ENV: ${APP_ENV}
+      HTTP_PORT: ${HTTP_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL}
     ports:
       - "8080:8080"
     command: ["/app/api"]

@@ -39,8 +39,8 @@ func main() {
 	}
 	defer dbPool.Close()
 
-	// Opsiyonel: Uygulama içi migration'ı env ile aç/kapat.
-// Docker Compose'ta APP_MIGRATE set etmeyeceğiz, yani default: kapalı.
+	
+
 if os.Getenv("APP_MIGRATE") == "true" {
 	if err := db.RunMigrations(ctx, dbPool); err != nil {
 		log.Error("migrations", "err", err)
@@ -49,13 +49,22 @@ if os.Getenv("APP_MIGRATE") == "true" {
 }
 
 
-	repos := postgres.NewRepositories(dbPool)
-	wp := worker.NewPool(4)
-	defer wp.Stop()
+	// cmd/api/main.go 
+repos := postgres.NewRepositories(dbPool)
+wp := worker.NewPool(4)
+defer wp.Stop()
 
-	userSvc := services.NewUserService(repos.Users, cfg)
-	balanceSvc := services.NewBalanceService(repos.Balances)
-	txnSvc := services.NewTransactionService(repos.Transactions, repos.Balances, repos.AuditLogs, wp)
+userSvc := services.NewUserService(repos.Users, cfg)
+balanceSvc := services.NewBalanceService(repos.Balances)
+txnSvc := services.NewTransactionService(
+    repos.Transactions,
+    repos.Balances,
+    repos.AuditLogs,
+    repos.Users,   
+    wp,
+)
+
+
 
 	metrics.Init()
 	r := api.NewRouter(cfg, userSvc, balanceSvc, txnSvc)
@@ -65,6 +74,11 @@ if os.Getenv("APP_MIGRATE") == "true" {
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+log.Info("env check",
+  "APP_ENV", os.Getenv("APP_ENV"),
+  "JWT_ISSUER", os.Getenv("JWT_ISSUER"),
+  "ACCESS_SECRET_len", len(os.Getenv("JWT_ACCESS_SECRET")),
+)
 
 	go func() {
 		log.Info("server starting", "port", cfg.HTTPPort)
@@ -78,4 +92,11 @@ if os.Getenv("APP_MIGRATE") == "true" {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+	log.Info("env check",
+    "APP_ENV", os.Getenv("APP_ENV"),
+    "JWT_ISSUER", os.Getenv("JWT_ISSUER"),
+    "ACCESS_SECRET_len", len(os.Getenv("JWT_ACCESS_SECRET")),
+)
+
+
 }

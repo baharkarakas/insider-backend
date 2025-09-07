@@ -15,7 +15,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "http_requests_latency_seconds",
 			Help:    "Latency of HTTP requests.",
-			Buckets: prometheus.DefBuckets, // istersen özel bucket dizisi tanımla
+			Buckets: prometheus.DefBuckets, 
 		},
 		[]string{"method", "route", "status"},
 	)
@@ -33,11 +33,11 @@ func (w *statusRecorder) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// HTTPMetrics ölçer: method, route, status -> histogram
+// HTTPMetrics ölçer
 func HTTPMetrics(next http.Handler) http.Handler {
 	metricsOnce.Do(func() {
 		prometheus.MustRegister(httpLatency)
-		// rlDropped RateLimit içinde register ediliyor (once.Do)
+		
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +58,6 @@ func routePattern(r *http.Request) string {
 			return patt
 		}
 	}
-	// fallback (kardinaliteyi patlatabilir ama mecbur kalırsak)
+	// fallback 
 	return r.URL.Path
 }

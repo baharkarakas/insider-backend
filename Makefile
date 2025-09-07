@@ -1,6 +1,6 @@
 .PHONY: tidy build run up down restart logs ps app-logs db-logs psql seed schema idx test-balance test-credit test-debit test-transfer token
 
-# ---- Go ----
+#  Go
 tidy:
 	go mod tidy
 
@@ -11,7 +11,7 @@ run:
 	APP_ENV=dev HTTP_PORT=8080 DATABASE_URL="postgres://postgres:postgres@localhost:5432/insider?sslmode=disable" \
 	go run ./cmd/api
 
-# ---- Docker ----
+#  Docker
 up:
 	docker compose up -d --build
 
@@ -34,7 +34,7 @@ db-logs:
 ps:
 	docker compose ps
 
-# ---- DB helpers ----
+# DB helpers 
 psql:
 	docker compose exec -T db psql -U postgres -d insider
 
@@ -51,7 +51,7 @@ seed:
 	 SELECT 'demo','demo@example.com','x','user'
 	 WHERE NOT EXISTS (SELECT 1 FROM users WHERE email='demo@example.com');"
 
-# ---- Quick test calls (Git Bash / WSL) ----
+#  Quick test calls (Git Bash / WSL)
 token:
 	@USER_ID=$$(docker compose exec -T db psql -U postgres -d insider -t -A -c "SELECT id FROM users WHERE email='demo@example.com';"); \
 	echo "dev-$$USER_ID"
@@ -87,3 +87,11 @@ test-transfer:
 	 -H "Authorization: Bearer dev-$$A_ID" \
 	 -H "Idempotency-Key: xfer-1" \
 	 -d "$$(printf '{"'"to_user_id"':"'"%s"'","'"amount"'":100}' "$$B_ID")"
+.PHONY: health demo
+
+health:
+	@curl -s http://localhost:8080/health || true
+
+demo:
+	chmod +x scripts/demo.sh
+	./scripts/demo.sh

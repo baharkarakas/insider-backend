@@ -14,6 +14,7 @@ type Users interface {
 	List() ([]models.User, error)
 	Update(u models.User) error
 	Delete(id string) error
+	Exists(ctx context.Context, id string) (bool, error)
 }
 
 type Balances interface {
@@ -27,8 +28,6 @@ type Transactions interface {
 	GetByID(id string) (models.Transaction, error)
 	ListByUser(userID string, limit, offset int) ([]models.Transaction, error)
 	UpdateStatus(id string, status models.TransactionStatus) error
-
-	// Atomik iş bloğu: tek DB transaction'ı içinde çalıştır (pgx.Tx).
 	WithTx(ctx context.Context, fn func(pgx.Tx) error) error
 }
 

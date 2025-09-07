@@ -31,7 +31,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// GeneratePair: access + refresh üretir
+// GeneratePair: access + refresh 
 func (tm *TokenManager) GeneratePair(userID, role string) (access string, refresh string, accessExp time.Time, err error) {
 	now := time.Now()
 
@@ -68,9 +68,9 @@ func (tm *TokenManager) GeneratePair(userID, role string) (access string, refres
 	return access, refresh, accClaims.ExpiresAt.Time, nil
 }
 
-// ParseAny: hem access hem refresh deneyip döner
+// ParseAny
 func (tm *TokenManager) ParseAny(tokenStr string) (*Claims, bool, error) {
-	// önce access ile dene
+	
 	claims := &Claims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
 		return tm.accessSecret, nil
@@ -79,7 +79,7 @@ func (tm *TokenManager) ParseAny(tokenStr string) (*Claims, bool, error) {
 		return claims, false, nil
 	}
 
-	// refresh ile dene
+
 	claims = &Claims{}
 	_, err = jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
 		return tm.refreshSecret, nil

@@ -1,4 +1,3 @@
-// internal/middleware/roles.go
 package middleware
 
 import "net/http"

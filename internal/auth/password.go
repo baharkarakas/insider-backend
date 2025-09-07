@@ -2,11 +2,17 @@ package auth
 
 import "golang.org/x/crypto/bcrypt"
 
-func HashPassword(pw string) (string, error) {
-	b, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
-	return string(b), err
+func HashPassword(p string) (string, error) {
+    b, err := bcrypt.GenerateFromPassword([]byte(p), bcrypt.DefaultCost)
+    return string(b), err
 }
 
-func CheckPassword(hash, pw string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
+// alias: VerifyPassword adıyla da kullanılabilsin
+func VerifyPassword(plain, hash string) error {
+    return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain))
+}
+
+// eski çağrılar için hâlâ dursun
+func ComparePassword(plain, hash string) error {
+    return VerifyPassword(plain, hash)
 }

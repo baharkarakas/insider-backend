@@ -1,73 +1,123 @@
-// internal/middleware/auth.go
 package middleware
 
 import (
 	"context"
-	"encoding/json"
+
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
-	"github.com/baharkarakas/insider-backend/internal/auth"
+	"github.com/baharkarakas/insider-backend/internal/api/httpx"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type ctxKey string
 
 const (
-    ctxUserIDKey ctxKey = "uid"
-    ctxRoleKey   ctxKey = "role"
+	ctxUserIDKey ctxKey = "uid"
+	ctxRoleKey   ctxKey = "role"
 )
 
-func UserID(ctx context.Context) (string, bool) { // <--- İSİM DEĞİŞTİ
-    v, ok := ctx.Value(ctxUserIDKey).(string)
-    return v, ok
+func UserID(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(ctxUserIDKey).(string)
+	return v, ok
 }
-func Role(ctx context.Context) (string, bool) { // <--- İSİM DEĞİŞTİ
-    v, ok := ctx.Value(ctxRoleKey).(string)
-    return v, ok
+
+func UserRole(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(ctxRoleKey).(string)
+	return v, ok
 }
+
+// Back-compat alias
+func Role(ctx context.Context) (string, bool) { return UserRole(ctx) }
 
 type AuthMiddleware struct {
-    TM     *auth.TokenManager
-    AppEnv string
+	
+	AppEnv string
 }
 
-func NewAuthMiddleware(tm *auth.TokenManager, appEnv string) *AuthMiddleware {
-    return &AuthMiddleware{TM: tm, AppEnv: appEnv}
+func NewAuthMiddleware(_any interface{}, appEnv string) *AuthMiddleware {
+	
+	return &AuthMiddleware{AppEnv: appEnv}
 }
 
-type errResp struct{ Error string `json:"error"` }
 
-func (m *AuthMiddleware) writeErr(w http.ResponseWriter, code int, msg string) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(code)
-    _ = json.NewEncoder(w).Encode(errResp{Error: msg})
+
+func contextWithUser(ctx context.Context, uid, role string) context.Context {
+	ctx = context.WithValue(ctx, ctxUserIDKey, uid)
+	ctx = context.WithValue(ctx, ctxRoleKey, role)
+	return ctx
 }
 
-// DEV: Bearer dev-<uuid> | PROD/DEV: Bearer <JWT(access)>
+// Access token claim’leri
+type accessClaims struct {
+	UID  string `json:"uid"`
+	Role string `json:"role"`
+	Typ  string `json:"typ"` // "access" bekliyoruz
+	jwt.RegisteredClaims
+}
+
 func (m *AuthMiddleware) Auth(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        ah := r.Header.Get("Authorization")
-        if ah == "" || !strings.HasPrefix(strings.ToLower(ah), "bearer ") {
-            m.writeErr(w, http.StatusUnauthorized, "missing bearer token")
-            return
-        }
-        token := strings.TrimSpace(ah[len("Bearer "):])
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hdr := r.Header.Get("Authorization")
+		if hdr == "" || !strings.HasPrefix(hdr, "Bearer ") {
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token", nil)
+			return
+		}
+		tokenStr := strings.TrimPrefix(hdr, "Bearer ")
 
-        if m.AppEnv == "dev" && strings.HasPrefix(token, "dev-") {
-            uid := strings.TrimPrefix(token, "dev-")
-            ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
-            ctx = context.WithValue(ctx, ctxRoleKey, "user")
-            next.ServeHTTP(w, r.WithContext(ctx))
-            return
-        }
+		secret := os.Getenv("JWT_ACCESS_SECRET")
+		if secret == "" {
+			httpx.WriteError(w, http.StatusInternalServerError, "server_misconfig", "missing JWT_ACCESS_SECRET", nil)
+			return
+		}
+		issuer := os.Getenv("JWT_ISSUER") // boş ise kontrol etmeyiz
 
-        claims, isRefresh, err := m.TM.ParseAny(token)
-        if err != nil || isRefresh {
-            m.writeErr(w, http.StatusUnauthorized, "invalid access token")
-            return
-        }
-        ctx := context.WithValue(r.Context(), ctxUserIDKey, claims.UserID)
-        ctx = context.WithValue(ctx, ctxRoleKey, claims.Role)
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
+		claims := &accessClaims{}
+		tok, err := jwt.ParseWithClaims(
+			tokenStr,
+			claims,
+			func(t *jwt.Token) (interface{}, error) {
+				
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, jwt.ErrTokenUnverifiable
+				}
+				return []byte(secret), nil
+			},
+			
+		)
+		if err != nil || !tok.Valid {
+			if strings.EqualFold(m.AppEnv, "dev") {
+				log.Printf("AUTH VERIFY ERROR: parse/valid failed: %v", err)
+			}
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid access token", nil)
+			return
+		}
+
+		// tip kontrolü
+		if claims.Typ != "" && claims.Typ != "access" {
+			if strings.EqualFold(m.AppEnv, "dev") {
+				log.Printf("AUTH VERIFY ERROR: unexpected typ=%s", claims.Typ)
+			}
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid access token", nil)
+			return
+		}
+		// issuer kontrolü (set edilmişse)
+		if issuer != "" && claims.Issuer != "" && claims.Issuer != issuer {
+			if strings.EqualFold(m.AppEnv, "dev") {
+				log.Printf("AUTH VERIFY ERROR: issuer mismatch: got=%s want=%s", claims.Issuer, issuer)
+			}
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid access token", nil)
+			return
+		}
+		// uid zorunlu
+		if claims.UID == "" {
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid access token", nil)
+			return
+		}
+
+		ctx := contextWithUser(r.Context(), claims.UID, claims.Role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

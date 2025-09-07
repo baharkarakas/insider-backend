@@ -11,8 +11,6 @@ import (
 
 type transactionsRepo struct{ pool *pgxpool.Pool }
 
-// ctor'un vardır; yoksa:
-// func NewTransactionsRepo(pool *pgxpool.Pool) *transactionsRepo { return &transactionsRepo{pool: pool} }
 
 func (r *transactionsRepo) Create(tx models.Transaction) (models.Transaction, error) {
 	if tx.ID == "" {
@@ -82,7 +80,7 @@ func (r *transactionsRepo) UpdateStatus(id string, status models.TransactionStat
 	return err
 }
 
-// 🔐 pgx ile tek transaction çalıştır
+
 func (r *transactionsRepo) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.Serializable,

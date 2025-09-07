@@ -12,8 +12,8 @@ type tokenBucket struct {
 	mu     sync.Mutex
 	tokens int
 	last   time.Time
-	rate   int // tokens per second
-	burst  int // max bucket size
+	rate   int 
+	burst  int 
 }
 
 func RateLimit(rps int) func(http.Handler) http.Handler {

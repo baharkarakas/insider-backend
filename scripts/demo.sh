@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+
 set -euo pipefail
 
 BASE="http://localhost:8080/api/v1"
@@ -7,7 +7,7 @@ reg()  { curl -s -X POST "$BASE/auth/register" -H "Content-Type: application/jso
 login(){ curl -s -X POST "$BASE/auth/login"    -H "Content-Type: application/json" -d "$1" \
         | python -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'; }
 
-# her koşuda benzersiz idempotency key
+
 STAMP="$(date +%s)"
 IDEM_CREDIT="credit-$STAMP"
 IDEM_TRANSFER="transfer-$STAMP"

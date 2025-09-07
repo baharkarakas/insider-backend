@@ -1,5 +1,0 @@
-from collections import Counter
-def most_frequent_char(s):
-    counter = Counter(s)
-    return max(counter,key= counter.get)
-print(most_frequent_char("programming"))

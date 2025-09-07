@@ -25,13 +25,28 @@ func (s *UserService) Register(username, email, password string) (models.User, e
 	return s.r.Create(u.Username, u.Email, hash, u.Role)
 }
 
-// internal/services/user_service.go
-// internal/services/user_service.go
 func (s *UserService) Login(email, password string) (string, error) {
-    return "", errors.New("deprecated: use /api/v1/auth/login")
+	return "", errors.New("deprecated: use /api/v1/auth/login")
+}
+// internal/services/user_service.go
+func (s *UserService) List() ([]models.User, error) {
+    return s.r.List()
 }
 
 
+func (s *UserService) GetByEmailAndPassword(email, password string) (models.User, error) {
+	
+	u, err := s.r.GetByEmail(strings.TrimSpace(email))
+	if err != nil {
+		return models.User{}, err
+	}
+	
 
+	
+	if err := auth.VerifyPassword(password, u.PasswordHash); err != nil {
+		
+		return models.User{}, errors.New("invalid credentials")
+	}
 
-func (s *UserService) List() ([]models.User, error) { return s.r.List() }
+	return u, nil
+}

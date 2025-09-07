@@ -1,7 +1,7 @@
-# Tüm metin dosyaları LF olsun
+
 * text=auto eol=lf
 
-# Özellikle şu dosya tipleri
+
 *.go       text eol=lf
 *.sql      text eol=lf
 *.yml      text eol=lf

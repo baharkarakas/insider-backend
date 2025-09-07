@@ -1,4 +1,3 @@
-// internal/api/handlers/auth.go
 package handlers
 
 import (
@@ -8,23 +7,28 @@ import (
 	"time"
 
 	"github.com/baharkarakas/insider-backend/internal/auth"
+	"github.com/baharkarakas/insider-backend/internal/services"
 )
 
 type AuthHandler struct {
 	TM     *auth.TokenManager
+	Users  *services.UserService
 	AppEnv string
 }
 
-func NewAuthHandler(tm *auth.TokenManager) *AuthHandler {
+func NewAuthHandler(tm *auth.TokenManager, us *services.UserService) *AuthHandler {
 	return &AuthHandler{
 		TM:     tm,
+		Users:  us,
 		AppEnv: os.Getenv("APP_ENV"),
 	}
 }
 
 type loginReq struct {
-	// Gelecekte: Email/Username + Password bekleyebilirsin
-	// Dev kısa yol: user_id ve role da kabul edelim
+	Email    string `json:"email,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	
 	UserID string `json:"user_id,omitempty"`
 	Role   string `json:"role,omitempty"`
 }
@@ -32,24 +36,40 @@ type loginReq struct {
 type tokenResp struct {
 	AccessToken  string        `json:"access_token"`
 	RefreshToken string        `json:"refresh_token"`
-	ExpiresIn    time.Duration `json:"expires_in"` // access süresi
+	ExpiresIn    time.Duration `json:"expires_in"`
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// DEV hızlı yol:
-	if h.AppEnv == "dev" {
-		// 1) Header'da dev-<uuid> varsa onu kullan
-		if ah := r.Header.Get("Authorization"); len(ah) > 6 && ah[:6] == "Bearer" {
-			// middleware zaten dev-<uuid> ile geçmeye izin veriyor, ama login'de JWT üretmek istiyoruz.
-			// Bu yüzden body'den de kabul edelim:
-		}
+	var req loginReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
-		var req loginReq
-		_ = json.NewDecoder(r.Body).Decode(&req)
+	// 1) Normal: email+password
+	if req.Email != "" && req.Password != "" {
+		u, err := h.Users.GetByEmailAndPassword(req.Email, req.Password)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid credentials"})
+			return
+		}
+		access, refresh, exp, err := h.TM.GeneratePair(u.ID, u.Role)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "token generation failed"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(tokenResp{
+			AccessToken:  access,
+			RefreshToken: refresh,
+			ExpiresIn:    time.Until(exp).Truncate(time.Second),
+		})
+		return
+	}
+
+	// 2) DEV kısa yol 
+	if h.AppEnv == "dev" {
 		if req.UserID == "" {
-			// Çok kısa yol: herhangi bir user id yoksa varsayılan örnek
 			req.UserID = "00000000-0000-0000-0000-000000000000"
 		}
 		if req.Role == "" {
@@ -69,9 +89,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// PROD (veya dev dışı): Buraya gerçek kimlik doğrulamayı bağlayacağız
-	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "login not implemented yet"})
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "email & password required"})
 }
 
 type refreshReq struct {

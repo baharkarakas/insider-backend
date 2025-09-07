@@ -13,19 +13,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+var ErrRecipientNotFound = errors.New("recipient user not found")
+
+
 type TransactionService struct {
-	trx  repo.Transactions
-	bal  repo.Balances
-	log  repo.AuditLogs
-	wp   *worker.Pool
-	idem sync.Map // Idempotency-Key -> txID (process-local demo)
+	trx   repo.Transactions
+	bal   repo.Balances
+	log   repo.AuditLogs
+	users repo.Users
+	wp    *worker.Pool
+	idem  sync.Map
 }
 
-func NewTransactionService(t repo.Transactions, b repo.Balances, l repo.AuditLogs, wp *worker.Pool) *TransactionService {
-	return &TransactionService{trx: t, bal: b, log: l, wp: wp}
+func NewTransactionService(
+	t repo.Transactions,
+	b repo.Balances,
+	l repo.AuditLogs,
+	u repo.Users,
+	wp *worker.Pool,
+) *TransactionService {
+	return &TransactionService{trx: t, bal: b, log: l, users: u, wp: wp}
 }
 
-// ----------------- Helpers -----------------
+//  helpers 
 
 func (s *TransactionService) audit(entityID, action, details string) {
 	var det map[string]any
@@ -53,20 +63,16 @@ func (s *TransactionService) getOrCreateBalance(userID string) error {
 	return err
 }
 
-// ----------------- CREDIT -----------------
+// CREDIT 
 
-// Orijinal API (idempotency olmadan)
 func (s *TransactionService) Credit(userID string, amount int64) (models.Transaction, error) {
 	return s.CreditIdem(userID, amount, "")
 }
 
-// Idempotency destekli sürüm
 func (s *TransactionService) CreditIdem(userID string, amount int64, idemKey string) (models.Transaction, error) {
 	if amount <= 0 {
 		return models.Transaction{}, errors.New("amount must be > 0")
 	}
-
-	// Idempotency (process-local demo)
 	if idemKey != "" {
 		if v, ok := s.idem.Load(idemKey); ok {
 			return s.trx.GetByID(v.(string))
@@ -95,7 +101,6 @@ func (s *TransactionService) CreditIdem(userID string, amount int64, idemKey str
 	s.wp.Submit(func() {
 		metrics.WorkerQueueDepth.Inc()
 		defer metrics.WorkerQueueDepth.Dec()
-
 		if err := s.processCredit(created); err != nil {
 			metrics.TransactionsFailed.Inc()
 			return
@@ -121,27 +126,21 @@ func (s *TransactionService) processCredit(tx models.Transaction) error {
 	return s.updateStatus(tx.ID, models.TxnCompleted, "credit applied")
 }
 
-// ----------------- DEBIT -----------------
+// DEBIT 
 
-// Orijinal API
 func (s *TransactionService) Debit(userID string, amount int64) (models.Transaction, error) {
 	return s.DebitIdem(userID, amount, "")
 }
 
-// Idempotency destekli sürüm
 func (s *TransactionService) DebitIdem(userID string, amount int64, idemKey string) (models.Transaction, error) {
 	if amount <= 0 {
 		return models.Transaction{}, errors.New("amount must be > 0")
 	}
-
-	// Idempotency
 	if idemKey != "" {
 		if v, ok := s.idem.Load(idemKey); ok {
 			return s.trx.GetByID(v.(string))
 		}
 	}
-
-	// Yetersiz bakiye koruması (servis katı)
 	if err := s.getOrCreateBalance(userID); err != nil {
 		return models.Transaction{}, err
 	}
@@ -171,7 +170,6 @@ func (s *TransactionService) DebitIdem(userID string, amount int64, idemKey stri
 	s.wp.Submit(func() {
 		metrics.WorkerQueueDepth.Inc()
 		defer metrics.WorkerQueueDepth.Dec()
-
 		if err := s.processDebit(created); err != nil {
 			metrics.TransactionsFailed.Inc()
 			return
@@ -193,14 +191,13 @@ func (s *TransactionService) processDebit(tx models.Transaction) error {
 	return s.updateStatus(tx.ID, models.TxnCompleted, "debit applied")
 }
 
-// ----------------- TRANSFER -----------------
+//  TRANSFER 
 
-// Orijinal API
+
 func (s *TransactionService) Transfer(fromID, toID string, amount int64) (models.Transaction, error) {
 	return s.TransferIdem(fromID, toID, amount, "")
 }
 
-// Idempotency destekli sürüm
 func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, idemKey string) (models.Transaction, error) {
 	if amount <= 0 {
 		return models.Transaction{}, errors.New("amount must be > 0")
@@ -209,26 +206,35 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 		return models.Transaction{}, errors.New("cannot transfer to self")
 	}
 
-	// Idempotency (process-local)
+	
+	exists, err := s.users.Exists(context.Background(), toID)
+if err != nil {
+    return models.Transaction{}, fmt.Errorf("check recipient failed: %w", err)
+}
+if !exists {
+    return models.Transaction{}, ErrRecipientNotFound
+}
+
+
+	// Idempotency
 	if idemKey != "" {
 		if v, ok := s.idem.Load(idemKey); ok {
 			return s.trx.GetByID(v.(string))
 		}
 	}
 
-	// Balans kayıtlarını hazırla
+	// Balans kayıtları
 	if err := s.getOrCreateBalance(fromID); err != nil {
 		return models.Transaction{}, err
 	}
 	if err := s.getOrCreateBalance(toID); err != nil {
 		return models.Transaction{}, err
 	}
-	// Basit ön kontrol (opsiyonel)
 	if b, err := s.bal.Get(fromID); err == nil && b.Amount < amount {
 		return models.Transaction{}, errors.New("insufficient balance")
 	}
 
-	// Pending transaction kaydı
+	// Pending transaction
 	txModel := models.Transaction{
 		Amount:     amount,
 		Type:       models.TxnTransfer,
@@ -239,6 +245,7 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 	if idemKey != "" {
 		txModel.IdempotencyKey = &idemKey
 	}
+
 	created, err := s.trx.Create(txModel)
 	if err != nil {
 		return models.Transaction{}, err
@@ -248,9 +255,8 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 		s.idem.Store(idemKey, created.ID)
 	}
 
-	// 🔐 Atomik blok (pgx.Tx ile)
+	
 	err = s.trx.WithTx(context.Background(), func(pgtx pgx.Tx) error {
-		// 1) debit (koşullu: amount >= ?)
 		tag, err := pgtx.Exec(context.Background(),
 			`UPDATE balances
              SET amount = amount - $1, last_updated_at = now()
@@ -264,7 +270,6 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 			return errors.New("insufficient balance")
 		}
 
-		// 2) credit
 		if _, err := pgtx.Exec(context.Background(),
 			`UPDATE balances
              SET amount = amount + $1, last_updated_at = now()
@@ -274,18 +279,14 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 			return err
 		}
 
-		// 3) status -> completed (aynı transaction içinde)
 		if _, err := pgtx.Exec(context.Background(),
-			`UPDATE transactions
-             SET status = 'completed'
-             WHERE id = $1`,
+			`UPDATE transactions SET status = 'completed' WHERE id = $1`,
 			created.ID,
 		); err != nil {
 			return err
 		}
 		return nil
 	})
-
 	if err != nil {
 		_ = s.trx.UpdateStatus(created.ID, models.TxnRolledBack)
 		s.audit(created.ID, "status_change", fmt.Sprintf("%s: %s", models.TxnRolledBack, err.Error()))
@@ -299,7 +300,7 @@ func (s *TransactionService) TransferIdem(fromID, toID string, amount int64, ide
 	return created, nil
 }
 
-// ----------------- Queries -----------------
+// Queries 
 
 func (s *TransactionService) GetByID(id string) (models.Transaction, error) {
 	return s.trx.GetByID(id)

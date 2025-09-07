@@ -1,6 +1,6 @@
 @HOST = http://localhost:8080
 @USER_ID = 4d7cb7a3-948f-4297-9bbd-ae11cd083b40
-# (Opsiyonel) demo2 daha önce oluşturduysan id'sini buraya koy:
+
 @B_ID = 2cdfcf0d-02ab-44ca-97a8-9f87011e6db1
 
 @TOKEN = Bearer dev-{{USER_ID}}
@@ -33,7 +33,7 @@ Content-Type: application/json
   "password": "x"
 }
 
-### B_ID'yi önceki cevaptan al (yukarıdaki isteği çalıştırdıysan)
+
 
 
 ### Debit (idempotent)
